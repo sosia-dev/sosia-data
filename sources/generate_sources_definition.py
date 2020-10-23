@@ -20,7 +20,7 @@ def create_fields_sources_list():
     one list of all sources with ids and one with field information.
     """
     # Set up
-    rename = {
+    col_map = {
         "All Science Journal Classification Codes (ASJC)": "asjc",
         "Scopus ASJC Code (Sub-subject Area)": "asjc",
         "ASJC code": "asjc",
@@ -37,25 +37,28 @@ def create_fields_sources_list():
         "Source Title (Medline-sourced journals are indicated in Green)": "title",
         "Conference Title": "title"
     }
-    keeps = list(set(rename.values()))
+    keeps = list(set(col_map.values()))
+    type_map = {"j": "journal", "p": "conference proceedings",
+                "d": "trade journal", "k": "book series"}
 
     # Get Information from Scopus Sources list
     archive = ZipFile(BytesIO(requests.get(URL_SOURCES).content))
     sources = pd.read_excel(archive.read(SOURCES_FNAME), sheet_name=None,
                             engine='pyxlsb')
     _drop_sheets(sources, ["About CiteScore", "ASJC codes"])
-    dfs = [df.rename(columns=rename)[keeps].dropna() for df in sources.values()]
+    dfs = [df.rename(columns=col_map)[keeps].dropna() for df in sources.values()]
     out = pd.concat(dfs).drop_duplicates()
+    out["type"] = out["type"].replace(type_map)
 
     # Add information from list of external publication titles
     external = pd.read_excel(_get_source_title_url(), sheet_name=None)
     _drop_sheets(external, ["More info Medline", "ASJC classification codes"])
 
     for df in external.values():
-        _update_dict(rename, df.columns, "source title", "title")
+        _update_dict(col_map, df.columns, "source title", "title")
         if "Source Type" not in df.columns:
             df["type"] = "conference proceedings"
-        subset = df.rename(columns=rename)[keeps].dropna()
+        subset = df.rename(columns=col_map)[keeps].dropna()
         subset["asjc"] = subset["asjc"].astype(str).apply(_clean).str.split()
         subset = (subset.set_index(["source_id", "title", "type"])
                         .asjc.apply(pd.Series)
@@ -71,7 +74,8 @@ def create_fields_sources_list():
     names.to_csv("./sources_names.csv", index=False)
 
     # Write list of fields by source
-    out["type"] = out["type"].str.lower().str.strip()
+    out["type"] = out["type"].str.title().str.strip()
+    print(out["type"].value_counts())
     out["asjc"] = out["asjc"].astype(int)
     out.drop("title", axis=1).to_csv("./field_sources_list.csv", index=False)
 
