@@ -68,14 +68,15 @@ def create_fields_sources_list():
 
     # Write list of names
     order = ["source_id", "title"]
-    names = out[order].drop_duplicates().sort_values("source_id")
+    names = out[order].drop_duplicates().sort_values(order)
     names.to_csv("./sources_names.csv", index=False)
 
     # Write list of fields by source
     out["type"] = out["type"].str.title().str.strip()
     print(out["type"].value_counts())
     out["asjc"] = out["asjc"].astype(int)
-    out.drop("title", axis=1).to_csv("./field_sources_list.csv", index=False)
+    out = out.drop("title", axis=1).sort_values(["type", "source_id", "asjc"])
+    out.to_csv("./field_sources_list.csv", index=False)
 
 
 def _clean(x):
