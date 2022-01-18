@@ -3,16 +3,12 @@
 #           Stefano H. Baruffaldi <ste.baruffaldi@gmail.com>
 """Compiles up-to-date source information to be downloaded by sosia."""
 
-from zipfile import ZipFile
-from io import BytesIO
-
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-SOURCES_FNAME = r"CiteScore 2011-2019 new methodology - June 2020.xlsb"
-URL_CONTENT = "https://www.elsevier.com/solutions/scopus/how-scopus-works/content"
 URL_SOURCES = "https://elsevier.com/?a=734751"
+URL_CONTENT = "https://www.elsevier.com/solutions/scopus/how-scopus-works/content"
 
 
 def create_fields_sources_list():
@@ -42,17 +38,19 @@ def create_fields_sources_list():
                 "d": "trade journal", "k": "book series"}
 
     # Get Information from Scopus Sources list
-    archive = ZipFile(BytesIO(requests.get(URL_SOURCES).content))
-    sources = pd.read_excel(archive.read(SOURCES_FNAME), sheet_name=None,
-                            engine='pyxlsb')
+    resp = requests.get(URL_SOURCES).content
+    sources = pd.read_excel(resp, sheet_name=None, engine='pyxlsb')
     _drop_sheets(sources, ["About CiteScore", "ASJC codes"])
     dfs = [df.rename(columns=col_map)[keeps].dropna() for df in sources.values()]
     out = pd.concat(dfs).drop_duplicates()
     out["type"] = out["type"].replace(type_map)
 
     # Add information from list of external publication titles
-    external = pd.read_excel(_get_source_title_url(), sheet_name=None)
-    _drop_sheets(external, ["More info Medline", "ASJC classification codes"])
+    resp = requests.get(_get_source_title_url()).content
+    external = pd.read_excel(resp, sheet_name=None)
+    drops = ["Accepted titles Nov. 2021", "Discontinued titles Nov. 2021",
+             "More info Medline", "ASJC classification codes"]
+    _drop_sheets(external, drops)
 
     for df in external.values():
         _update_dict(col_map, df.columns, "source title", "title")
