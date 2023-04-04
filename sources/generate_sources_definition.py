@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Authors:  Michael E. Rose <michael.ernst.rose@gmail.com>
 #           Stefano H. Baruffaldi <ste.baruffaldi@gmail.com>
 """Compiles up-to-date source information to be downloaded by sosia."""
@@ -34,8 +33,8 @@ def create_fields_sources_list():
         "Conference Title": "title"
     }
     keeps = list(set(col_map.values()))
-    type_map = {"j": "journal", "p": "conference proceedings",
-                "d": "trade journal", "k": "book series"}
+    type_map = {"j": "Journal", "p": "Conference Proceedings",
+                "d": "Trade Journal", "k": "Book Series"}
 
     # Get Information from Scopus Sources list
     resp = requests.get(URL_SOURCES).content
@@ -55,7 +54,7 @@ def create_fields_sources_list():
     for df in external.values():
         _update_dict(col_map, df.columns, "source title", "title")
         if "Source Type" not in df.columns:
-            df["type"] = "conference proceedings"
+            df["type"] = "Conference Proceedings"
         subset = df.rename(columns=col_map)[keeps].dropna()
         subset["asjc"] = subset["asjc"].astype(str).apply(_clean).str.split()
         subset = (subset.set_index(["source_id", "title", "type"])
@@ -63,19 +62,19 @@ def create_fields_sources_list():
                         .stack()
                         .rename("asjc")
                         .reset_index()
-                        .drop("level_3", axis=1))
+                        .drop(columns="level_3"))
         out = pd.concat([out, subset], sort=True)
 
     # Write list of names
     order = ["source_id", "title"]
-    names = out[order].drop_duplicates().sort_values(order)
+    names = out[order].sort_values(order).drop_duplicates(subset="source_id")
     names.to_csv("./sources_names.csv", index=False)
 
     # Write list of fields by source
     out["type"] = out["type"].str.title().str.strip()
-    print(out["type"].value_counts())
     out["asjc"] = out["asjc"].astype(int)
-    out = out.drop("title", axis=1).sort_values(["type", "source_id", "asjc"])
+    out = (out.drop(columns="title").sort_values(["type", "source_id", "asjc"])
+              .drop_duplicates())
     out.to_csv("./field_sources_list.csv", index=False)
 
 
