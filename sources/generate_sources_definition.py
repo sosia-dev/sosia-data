@@ -15,7 +15,7 @@ from pybliometrics.scopus.exception import Scopus404Error
 
 
 # if empty, will search and download file from URL_CONTENT
-FNAME_CONTENT = Path("extlistFebruary2023.xlsx")
+FNAME_CONTENT = Path("extlistSeptember2023.xlsx")
 URL_CONTENT = "https://www.elsevier.com/solutions/scopus/how-scopus-works/content"
 
 
@@ -96,7 +96,7 @@ def main():
     else:
         resp = requests.get(get_source_title_url()).content
     external = pd.read_excel(resp, sheet_name=None)
-    drops = ["Accepted titles Feb. 2023", "Discontinued titles Feb. 2023",
+    drops = ["Accepted titles Sept. 2023", "Discontinued titles Sept. 2023",
              "More info Medline", "ASJC classification codes"]
     drop_sheets_from_excel(external, drops)
 
