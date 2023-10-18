@@ -1,25 +1,42 @@
+#!/usr/bin/env python3
 # Authors:  Michael E. Rose <michael.ernst.rose@gmail.com>
 #           Stefano H. Baruffaldi <ste.baruffaldi@gmail.com>
 """Compiles up-to-date source information to be downloaded by sosia."""
 
 from pathlib import Path
+from tqdm import tqdm
+from urllib.parse import parse_qs, urlparse
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+from pybliometrics.scopus import AbstractRetrieval
+from pybliometrics.scopus.exception import Scopus404Error
 
-# if empty, will download file from URL_SOURCES
-FNAME_SOURCES = Path("")
-URL_SOURCES = "https://elsevier.com/?a=734751"
 
 # if empty, will search and download file from URL_CONTENT
-FNAME_CONTENT = Path("")
+FNAME_CONTENT = Path("extlistFebruary2023.xlsx")
 URL_CONTENT = "https://www.elsevier.com/solutions/scopus/how-scopus-works/content"
+
 
 
 def clean_string(x):
     """Auxiliary function to clean a string Series."""
     return x.replace(";", " ").replace(",", " ").replace("  ", " ").strip()
+
+
+def download_source_id(link):
+    """Retrieve source ID from abstract given its EID in a link."""
+    eid = parse_qs(urlparse(link).query)["eid"][0]
+    try:
+        ab = AbstractRetrieval(eid, view="FULL")
+        fields = ([f.code for f in ab.subject_areas])
+        return {"source_id": ab.source_id, "asjc": fields}
+    except (TypeError, Scopus404Error):
+        return None
+    except:
+        print(eid)
+        return None
 
 
 def drop_sheets_from_excel(sheets, drops):
@@ -40,13 +57,6 @@ def get_source_title_url():
     except AttributeError:
         raise ValueError("Link to sources list not found.")
 
-
-def read_sources(content, col_map):
-    """Read Excel file containing sheets with source coverage information."""
-    excel = pd.read_excel(resp, sheet_name=None, engine='pyxlsb')
-    drop_sheets_from_excel(df, ["About CiteScore", "ASJC codes"])
-    dfs = [df.rename(columns=col_map)[keeps].dropna() for df in excel.values()]
-    return pd.concat(dfs).drop_duplicates()
 
 
 def update_dict(d, lst, key, replacement):
@@ -78,52 +88,69 @@ def main():
         "Conference Title": "title"
     }
     keeps = list(set(col_map.values()))
-    type_map = {"j": "Journal", "p": "Conference Proceedings",
-                "d": "Trade Journal", "k": "Book Series"}
-
-    # Get Information from Scopus Sources list
-    if FNAME_SOURCES:
-        resp = FNAME_SOURCES
-    else:
-        resp = requests.get(URL_SOURCES).content
-    out = read_sources(resp, col_map)
-    out["type"] = out["type"].replace(type_map)
 
     # Add information from list of external publication titles
+    print(">>> Reading Excel file...")
     if FNAME_CONTENT:
         resp = FNAME_CONTENT
     else:
         resp = requests.get(get_source_title_url()).content
     external = pd.read_excel(resp, sheet_name=None)
-    drops = ["Accepted titles Nov. 2021", "Discontinued titles Nov. 2021",
+    drops = ["Accepted titles Feb. 2023", "Discontinued titles Feb. 2023",
              "More info Medline", "ASJC classification codes"]
     drop_sheets_from_excel(external, drops)
 
-    for df in external.values():
+    print(">>> Now parsing sources and fields from sheet:")
+    out = []
+    for name, df in external.items():
+        print(f"... '{name}'")
         update_dict(col_map, df.columns, "source title", "title")
-        if "Source Type" not in df.columns:
-            df["type"] = "Conference Proceedings"
-        subset = df.rename(columns=col_map)[keeps].dropna()
-        subset["asjc"] = subset["asjc"].astype(str).apply(_clean).str.split()
+        if name == 'All Conf. Proceedings':
+            df = df.drop(columns=["Title", "Unnamed: 5", "Year", "Volume"])
+        df = df.rename(columns=col_map).reset_index(drop=True)
+        if "type" not in df.columns:
+            df["type"] = "cp"
+        try:
+            subset = df[keeps].dropna()
+            subset["asjc"] = subset["asjc"].astype(str).apply(clean_string).str.split()
+        except KeyError:
+            df = df.dropna(subset=["Link"])
+            source_info = {idx: download_source_id(link) for idx, link in
+                           tqdm(enumerate(df["Link"]), total=df.shape[0], leave=False)}
+            source_info = pd.DataFrame.from_dict(source_info).T
+            subset = pd.concat([df, source_info], axis=1)
+            subset = subset.dropna(subset=["source_id"])
         subset = (subset.set_index(["source_id", "title", "type"])
                         .asjc.apply(pd.Series)
                         .stack()
                         .rename("asjc")
                         .reset_index()
                         .drop(columns="level_3"))
-        out = pd.concat([out, subset], sort=True)
+        out.append(subset)
+    out = pd.concat(out, axis=0)
+    out["asjc"] = out["asjc"].astype("uint32")
 
-    # Write list of names
-    order = ["source_id", "title"]
-    names = out[order].sort_values(order).drop_duplicates(subset="source_id")
-    names.to_csv(Path("./sources_names.csv"), index=False)
+    # Write info
+    order = ["source_id", "type", "title"]
+    out["type"] = out["type"].str.title().str.strip()
+    type_map = {"Journal": "jr", "Conference Proceedings": "cp",
+                "Cp": "cp", "Trade Journal": "tr", "Book Series": "bk"}
+    out["type"] = out["type"].replace(type_map)
+    info = (out.drop_duplicates("source_id")
+               .dropna().sort_values(order))
+    info[order].to_csv("./source_info.csv", index=False)
+    print(f">>> Found {info.shape[0]:,} sources")
+    print(out["type"].value_counts())
 
     # Write list of fields by source
-    out["type"] = out["type"].str.title().str.strip()
-    out["asjc"] = out["asjc"].astype(int)
-    out = (out.drop(columns="title").sort_values(["type", "source_id", "asjc"])
-              .drop_duplicates())
-    out.to_csv(Path("./field_sources_list.csv"), index=False)
+    out = (out.drop(columns=["title", "type"])
+              .drop_duplicates()
+              .sort_values(["source_id", "asjc"]))
+    out.to_csv("./field_sources_map.csv", index=False)
+    print(f">>> Found {out.shape[0]:,} sources with ASJC4 information")
+    dist = out["source_id"].value_counts().value_counts().sort_index()
+    share_one = dist.loc[1]/dist.sum()
+    print(f"--- {dist.loc[1]:,} sources w/ one ASJC4 ({share_one:.1%})")
 
 
 if __name__ == '__main__':
