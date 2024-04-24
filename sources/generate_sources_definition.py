@@ -8,16 +8,12 @@ from tqdm import tqdm
 from urllib.parse import parse_qs, urlparse
 
 import pandas as pd
-import requests
-from bs4 import BeautifulSoup
+import pybliometrics
 from pybliometrics.scopus import AbstractRetrieval
 from pybliometrics.scopus.exception import Scopus404Error
 
-
-# if empty, will search and download file from URL_CONTENT
-FNAME_CONTENT = Path("extlistSeptember2023.xlsx")
-URL_CONTENT = "https://www.elsevier.com/solutions/scopus/how-scopus-works/content"
-
+FNAME_CONTENT = Path("ext_list_March_2024.xlsx")
+pybliometrics.scopus.init()
 
 
 def clean_string(x):
@@ -27,7 +23,10 @@ def clean_string(x):
 
 def download_source_id(link):
     """Retrieve source ID from abstract given its EID in a link."""
-    eid = parse_qs(urlparse(link).query)["eid"][0]
+    try:
+        eid = parse_qs(urlparse(link).query)["eid"][0]
+    except KeyError:
+        return None
     try:
         ab = AbstractRetrieval(eid, view="FULL")
         fields = ([f.code for f in ab.subject_areas])
@@ -39,26 +38,6 @@ def download_source_id(link):
         return None
 
 
-def drop_sheets_from_excel(sheets, drops):
-    """Auxiliary function to drop sheets from an Excel DataFrame."""
-    for drop in drops:
-        try:
-            sheets.pop(drop)
-        except KeyError:
-            continue
-
-
-def get_source_title_url():
-    """Extract the link to the most recent Scopus sources list."""
-    resp = requests.get(URL_CONTENT)
-    soup = BeautifulSoup(resp.text, "lxml")
-    try:
-        return soup.find("a", {"title": "source list"})["href"]
-    except AttributeError:
-        raise ValueError("Link to sources list not found.")
-
-
-
 def update_dict(d, lst, key, replacement):
     """Auxiliary function to add keys to a dictionary if a given string is
     included in the key.
@@ -68,50 +47,18 @@ def update_dict(d, lst, key, replacement):
             d[c] = replacement
 
 
-def main():
-    # Set up
-    col_map = {
-        "All Science Journal Classification Codes (ASJC)": "asjc",
-        "Scopus ASJC Code (Sub-subject Area)": "asjc",
-        "ASJC code": "asjc",
-        "Source Type": "type",
-        "ASJC Code": "asjc",
-        "Type": "type",
-        "Sourcerecord id": "source_id",
-        "Sourcerecord ID": "source_id",
-        "Scopus Source ID": "source_id",
-        "Scopus SourceID": "source_id",
-        "Scopus Source ID": "source_id",
-        "Title": "title",
-        "Source title": "title",
-        "Source Title (Medline-sourced journals are indicated in Green)": "title",
-        "Conference Title": "title"
-    }
-    keeps = list(set(col_map.values()))
-
-    # Add information from list of external publication titles
+if __name__ == '__main__':
     print(">>> Reading Excel file...")
-    if FNAME_CONTENT:
-        resp = FNAME_CONTENT
-    else:
-        resp = requests.get(get_source_title_url()).content
-    external = pd.read_excel(resp, sheet_name=None)
-    drops = ["Accepted titles Sept. 2023", "Discontinued titles Sept. 2023",
-             "More info Medline", "ASJC classification codes"]
-    drop_sheets_from_excel(external, drops)
+    external = pd.read_excel(FNAME_CONTENT, sheet_name=None)
 
     print(">>> Now parsing sources and fields from sheet:")
     out = []
     for name, df in external.items():
         print(f"... '{name}'")
-        update_dict(col_map, df.columns, "source title", "title")
-        if name == 'All Conf. Proceedings':
-            df = df.drop(columns=["Title", "Unnamed: 5", "Year", "Volume"])
-        df = df.rename(columns=col_map).reset_index(drop=True)
         if "type" not in df.columns:
             df["type"] = "cp"
         try:
-            subset = df[keeps].dropna()
+            subset = df
             subset["asjc"] = subset["asjc"].astype(str).apply(clean_string).str.split()
         except KeyError:
             df = df.dropna(subset=["Link"])
@@ -128,6 +75,7 @@ def main():
                         .drop(columns="level_3"))
         out.append(subset)
     out = pd.concat(out, axis=0)
+    out = out[out["asjc"] != "nan"]
     out["asjc"] = out["asjc"].astype("uint32")
 
     # Write info
@@ -151,7 +99,3 @@ def main():
     dist = out["source_id"].value_counts().value_counts().sort_index()
     share_one = dist.loc[1]/dist.sum()
     print(f"--- {dist.loc[1]:,} sources w/ one ASJC4 ({share_one:.1%})")
-
-
-if __name__ == '__main__':
-    main()
