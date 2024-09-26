@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# Authors:  Michael E. Rose <michael.ernst.rose@gmail.com>
-#           Stefano H. Baruffaldi <ste.baruffaldi@gmail.com>
 """Compiles up-to-date source information to be downloaded by sosia."""
 
 from pathlib import Path
@@ -12,7 +9,7 @@ import pybliometrics
 from pybliometrics.scopus import AbstractRetrieval
 from pybliometrics.scopus.exception import Scopus404Error
 
-FNAME_CONTENT = Path("ext_list_March_2024.xlsx")
+FNAME_CONTENT = Path("ext_list.xlsx")
 pybliometrics.scopus.init()
 
 
